@@ -1,0 +1,15 @@
+targets:
+  $default:
+    builders:
+      # ชื่อ builder ตรงนี้ต้องเป็น [ชื่อ package]:[ชื่อ builder ด้านล่าง]
+      trigger:trigger_builder:
+        enabled: true
+        generate_for:
+          - lib/** # สแกนเฉพาะใน lib
+builders:
+  trigger_builder:
+    import: "package:trigger_generator/builder.dart"
+    builder_factories: ["triggerBuilder"]
+    build_extensions: {".dart": [".g.dart"]}
+    auto_apply: root_package
+    build_to: source

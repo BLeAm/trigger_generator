@@ -1,0 +1,19 @@
+name: trigger_generator
+description: Code generator for Trigger, the state management.
+version: 1.0.0
+# repository: https://github.com/my_org/my_repo
+
+environment:
+  sdk: ^3.10.7
+
+# Add regular dependencies here.
+dependencies:
+  analyzer: 
+  build:
+  source_gen:
+  path: ^1.9.0
+  trigger: 
+    path: /home/bleamz/repos/trigger
+
+dev_dependencies:
+  build_runner: 
