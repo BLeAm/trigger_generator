@@ -37,7 +37,15 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
     final annotationName = annotation.read('name').isNull
         ? null
         : annotation.read('name').stringValue;
-
+    final effects = annotation
+        .read("fx")
+        .listValue
+        .map((e) => e.toTypeValue()?.getDisplayString())
+        .toList();
+    final fxInit = StringBuffer();
+    for (final fx in effects) {
+      fxInit.writeln('$fx(this);');
+    }
     String className =
         annotationName ??
         (rawName.endsWith('Anno')
@@ -46,6 +54,7 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
     // ---------------------------------------
 
     final gettersSetters = StringBuffer();
+    final constName = StringBuffer();
     final initVal = StringBuffer();
     final fBody = StringBuffer();
     final stBody = StringBuffer();
@@ -56,6 +65,8 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
 
       final name = field.name;
       String defaultValue = 'null';
+
+      constName.writeln('static const String _$name = "$name";');
 
       // ดึง Default Value จาก AST (โค้ดส่วนเดิมของคุณ)
       final library = field.library;
@@ -83,7 +94,7 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
       // ใน loop ที่วน field
       final dartType = field.type;
       final typeStr = dartType.getDisplayString();
-      var content = "getValue('$name') as $typeStr";
+      var content = "getValue(_$name) as $typeStr";
       if (['List', 'Map', 'Set'].any(typeStr.startsWith))
         content = makeUnModify(typeStr, content);
       gettersSetters.writeln("\t$typeStr get $name => $content;");
@@ -91,7 +102,7 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
       //   "\t$typeStr get $name => getValue('$name') as $typeStr;",
       // );
       gettersSetters.writeln(
-        "\tset $name($typeStr val) => setValue('$name', val);",
+        "\tset $name($typeStr val) => setValue(_$name, val);",
       );
 
       // initVal.writeln("\t\tsetValue('$name', $defaultValue);");
@@ -106,28 +117,72 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
       stBody.writeln('\tset $name($typeStr val) => _map["$name"] = val;');
 
       efBody.write(''' 
-      $typeStr get $name => effectTrigger.$name;
+      $typeStr get $name => trigger.$name;
       set $name($typeStr val) {
         checkAllow('$name');
-        effectTrigger.$name = val;
+        trigger.$name = val;
       }
       ''');
     }
 
     return '''
-final class $className extends Trigger {
-  static final $className _instance = $className._internal();
-  static final ${className}Fields fields = ${className}Fields();
+typedef _${className}EffectCreator = void Function(${className} t);
 
-  $className._internal([super.register]) {
-$initVal
+final class $className extends Trigger {
+
+  $constName
+
+  static final $className _instance = $className._internal();
+  static ${className}Fields get fields => ${className}Fields();
+
+  bool _fxAttached = false;
+
+  $className._internal([bool register=true]): super(register:register) {
+    $initVal
+    if (register) {
+      $fxInit
+      _fxAttached = true;
+    }
+  }
+
+  /// Attaches all master effects declared in @TriggerGen(fx: [...])
+/// 
+/// - Must be called before any listeners are added
+/// - Can be called only once per instance
+/// - If no effects are declared → acts as no-op and locks further calls
+  void attachMasterFx() {
+    if (_fxAttached) {throw StateError("Multiple attachment attempts are not allowed. This process is restricted to a single occurrence.");}
+    if (hasListeners()) {
+    throw StateError(
+      "Cannot attach master effects after listeners have been registered. "
+      "Attach effects before any listening occurs."
+    );
+  }
+    $fxInit
+    _fxAttached = true;
+  }
+
+  // ignore: library_private_types_in_public_api
+  void attachFx(List<_${className}EffectCreator> fxs) {
+    if (_fxAttached) {throw StateError("Multiple attachment attempts are not allowed. This process is restricted to a single occurrence.");}
+    if (hasListeners()) {
+    throw StateError(
+      "Cannot attach master effects after listeners have been registered. "
+      "Attach effects before any listening occurs."
+    );
+  }
+    for (var fx in fxs) {
+      fx(this);
+    }
+    _fxAttached = true;
   }
 
   //this will be used to spawn a new MainStates instance that is not singleton.
   factory $className.spawn() => $className._internal(false);
   factory $className() => _instance;
 
-$gettersSetters
+  $gettersSetters
+
   // ignore: library_private_types_in_public_api
   void multiSet(void Function(_${className}MultiSetter setter) func) {
     final setter = _${className}MultiSetter();
@@ -146,7 +201,7 @@ $stBody
 }
 
 abstract base class ${className}Effect extends TriggerEffect<$className> {
-
+  ${className}Effect(super.trigger);
   $efBody
 
  // ignore: library_private_types_in_public_api
@@ -157,7 +212,7 @@ abstract base class ${className}Effect extends TriggerEffect<$className> {
       checkAllow(key);
     }
     // ignore: invalid_use_of_protected_member
-    effectTrigger.setMultiValues(setter._map);
+    trigger.setMultiValues(setter._map);
   }
 }
 ''';
