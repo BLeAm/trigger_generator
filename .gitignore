@@ -3,3 +3,6 @@
 .dart_tool/
 result.txt
 tmp.txt
+states.g.dart
+states.master.dart 
+states.dart 

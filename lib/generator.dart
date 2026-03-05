@@ -132,17 +132,13 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
     }
 
     return '''
-// **************************************************************************
-// TriggerGenerator
-// **************************************************************************
-
 typedef _${className}EffectCreator = void Function(${className} t);
 
 final class $className extends Trigger {
   $constIndices
   static const int _fieldCount = $indexCounter;
 
-  static final $className _instance = $className._internal();
+  static $className? _instance;
 
   static final List<String> _fieldNamesList = [$fieldNamesList];
 
@@ -150,20 +146,26 @@ final class $className extends Trigger {
 
   bool _fxAttached = false;
 
-  $className._internal([bool register = true])
+  $className._internal({bool register = true, UpdateScheduler? scheduler})
       : super(
           fieldCount: _fieldCount,
           fieldNames: _fieldNamesList,
           register: register,
+          scheduler: scheduler,
         ) {
-$initVal
     if (register) {
-$fxInit      _fxAttached = true;
+$fxInit
+      _fxAttached = true;
     }
-  }
+$initVal  }
 
-  factory $className.spawn() => $className._internal(false);
-  factory $className() => _instance;
+  //this will be used to spawn a new $className instance that is not singleton.
+  factory $className.spawn({UpdateScheduler? scheduler}) =>
+      $className._internal(register: false, scheduler: scheduler);
+  factory $className({UpdateScheduler? scheduler}) {
+    _instance ??= $className._internal(scheduler: scheduler);
+    return _instance!;
+  }
 
   //Getter/Setter with performance of O(1)
 $gettersSetters
@@ -175,22 +177,39 @@ $gettersSetters
     setMultiValues(setter._map);
   }
 
+  /// Attaches all master effects declared in @TriggerGen(fx: [...])
+  ///
+  /// - Must be called before any listeners are added
+  /// - Can be called only once per instance
+  /// - If no effects are declared → acts as no-op and locks further calls
   void attachMasterFx() {
     if (_fxAttached) {
-      throw StateError("Multiple attachment attempts are not allowed.");
+      throw StateError(
+        "Multiple attachment attempts are not allowed. This process is restricted to a single occurrence.",
+      );
     }
     if (hasListeners()) {
-      throw StateError("Cannot attach master effects after listeners have been registered.");
+      throw StateError(
+        "Cannot attach master effects after listeners have been registered. "
+        "Attach effects before any listening occurs.",
+      );
     }
-$fxInit    _fxAttached = true;
+$fxInit
+    _fxAttached = true;
   }
 
+  // ignore: library_private_types_in_public_api
   void attachFx(List<_${className}EffectCreator> fxs) {
     if (_fxAttached) {
-      throw StateError("Multiple attachment attempts are not allowed.");
+      throw StateError(
+        "Multiple attachment attempts are not allowed. This process is restricted to a single occurrence.",
+      );
     }
     if (hasListeners()) {
-      throw StateError("Cannot attach master effects after listeners have been registered.");
+      throw StateError(
+        "Cannot attach master effects after listeners have been registered. "
+        "Attach effects before any listening occurs.",
+      );
     }
     for (var fx in fxs) {
       fx(this);
