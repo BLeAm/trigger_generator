@@ -1,19 +1,14 @@
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
-// import 'package:analyzer/dart/element/type.dart';
 import 'package:build/build.dart';
 import 'package:source_gen/source_gen.dart';
 import 'package:trigger/src/annotations.dart';
+import 'package:analyzer/dart/element/nullability_suffix.dart';
 
 String makeUnModify(String type, String content) {
-  // ใช้ RegExp r'<[^>]*>'
-  // <      : เริ่มต้นด้วย <
-  // [^>]* : ตามด้วยตัวอักษรอะไรก็ได้ที่ไม่ใช่ > จำนวนกี่ตัวก็ได้
-  // >      : ปิดท้ายด้วย >
   type = type.replaceAll(RegExp(r'<[^>]*>'), '');
-  content = 'Unmodifiable${type}View($content)';
-  return content;
+  return 'Unmodifiable${type}View($content)';
 }
 
 class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
@@ -29,51 +24,53 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
       );
     }
 
-    String rawName = element.name!;
-
-    // --- ส่วนที่แก้ไข: ดึงชื่อจาก Annotation ---
-    // ถ้ามีการใส่ @TriggerGen("MyName") ค่าจะถูกดึงมา
-    // ถ้าไม่ได้ใส่ (null) จะใช้ logic ตัด "Anno" แบบเดิม
+    final String rawName = element.name!;
     final annotationName = annotation.read('name').isNull
         ? null
         : annotation.read('name').stringValue;
+
     final effects = annotation
         .read("fx")
         .listValue
         .map((e) => e.toTypeValue()?.getDisplayString())
         .toList();
+
     final fxInit = StringBuffer();
     for (final fx in effects) {
-      fxInit.writeln('$fx(this);');
+      if (fx != null) fxInit.writeln('$fx(this);');
     }
-    String className =
+
+    final String className =
         annotationName ??
         (rawName.endsWith('Anno')
             ? rawName.substring(0, rawName.length - 4)
             : rawName);
-    // ---------------------------------------
 
     final gettersSetters = StringBuffer();
-    final constName = StringBuffer();
+    final constIndices = StringBuffer();
     final initVal = StringBuffer();
     final fBody = StringBuffer();
     final stBody = StringBuffer();
     final efBody = StringBuffer();
+    final fieldNamesList = StringBuffer();
 
+    int indexCounter = 0;
     for (var field in element.fields) {
       if (field.isStatic || field.isExternal) continue;
 
-      final name = field.name;
-      String defaultValue = 'null';
+      final bool isNullable =
+          field.type.nullabilitySuffix == NullabilitySuffix.question;
+      final name = field.name!;
+      final capName = name[0].toUpperCase() + name.substring(1);
+      final idxConst = '_idx$capName';
+      String defaultValue = isNullable ? 'null' : '';
 
-      constName.writeln('static const String _$name = "$name";');
-
-      // ดึง Default Value จาก AST (โค้ดส่วนเดิมของคุณ)
+      // ดึง Default Value จาก AST
       final library = field.library;
       final session = library.session;
       final parsedLib =
-          session.getParsedLibraryByElement(library!) as ParsedLibraryResult;
-
+          session.getParsedLibraryByElement(library) as ParsedLibraryResult?;
+      if (parsedLib == null) continue;
       for (var unit in parsedLib.units) {
         for (var declaration in unit.unit.declarations) {
           if (declaration is ClassDeclaration &&
@@ -91,97 +88,85 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
           }
         }
       }
-      // ใน loop ที่วน field
-      final dartType = field.type;
-      final typeStr = dartType.getDisplayString();
-      var content = "getValue(_$name) as $typeStr";
-      if (['List', 'Map', 'Set'].any(typeStr.startsWith))
+
+      final typeStr = field.type.getDisplayString();
+
+      // 1. สร้าง Static Index
+      constIndices.writeln('static const int $idxConst = $indexCounter;');
+      fieldNamesList.write("'$name', ");
+
+      // 2. สร้าง Getter/Setter O(1)
+      var content = "getValue($idxConst) as $typeStr";
+      if (['List', 'Map', 'Set'].any((t) => typeStr.startsWith(t))) {
         content = makeUnModify(typeStr, content);
-      gettersSetters.writeln("\t$typeStr get $name => $content;");
-      // gettersSetters.writeln(
-      //   "\t$typeStr get $name => getValue('$name') as $typeStr;",
-      // );
+      }
+      gettersSetters.writeln("  $typeStr get $name => $content;");
       gettersSetters.writeln(
-        "\tset $name($typeStr val) => setValue(_$name, val);",
+        "  set $name($typeStr val) => setValue($idxConst, val);",
       );
 
-      // initVal.writeln("\t\tsetValue('$name', $defaultValue);");
-      initVal.writeln("\t\t$name = $defaultValue;");
+      // 3. Constructor Initialization
+      initVal.writeln("    $name = $defaultValue;");
 
+      // 4. Fields (Index-based)
       fBody.writeln('''
-      ${className}Fields get $name {
-        addField('$name');
-        return this;
-      }''');
+  ${className}Fields get $name {
+    addField($className.$idxConst);
+    return this;
+  }''');
 
-      stBody.writeln('\tset $name($typeStr val) => _map["$name"] = val;');
+      // 5. MultiSetter (int keys)
+      stBody.writeln(
+        '  set $name($typeStr val) => _map[$className.$idxConst] = val;',
+      );
 
-      efBody.write(''' 
-      $typeStr get $name => trigger.$name;
-      set $name($typeStr val) {
-        checkAllow('$name');
-        trigger.$name = val;
-      }
-      ''');
+      // 6. Effect (Index-based protection)
+      efBody.writeln('''
+  $typeStr get $name => trigger.$name;
+  set $name($typeStr val) {
+    checkAllow($className.$idxConst);
+    trigger.$name = val;
+  }''');
+
+      indexCounter++;
     }
 
     return '''
+// **************************************************************************
+// TriggerGenerator
+// **************************************************************************
+
 typedef _${className}EffectCreator = void Function(${className} t);
 
 final class $className extends Trigger {
-
-  $constName
+  $constIndices
+  static const int _fieldCount = $indexCounter;
 
   static final $className _instance = $className._internal();
+
+  static final List<String> _fieldNamesList = [$fieldNamesList];
+
   static ${className}Fields get fields => ${className}Fields();
 
   bool _fxAttached = false;
 
-  $className._internal([bool register=true]): super(register:register) {
-    $initVal
+  $className._internal([bool register = true])
+      : super(
+          fieldCount: _fieldCount,
+          fieldNames: _fieldNamesList,
+          register: register,
+        ) {
+$initVal
     if (register) {
-      $fxInit
-      _fxAttached = true;
+$fxInit      _fxAttached = true;
     }
   }
 
-  /// Attaches all master effects declared in @TriggerGen(fx: [...])
-/// 
-/// - Must be called before any listeners are added
-/// - Can be called only once per instance
-/// - If no effects are declared → acts as no-op and locks further calls
-  void attachMasterFx() {
-    if (_fxAttached) {throw StateError("Multiple attachment attempts are not allowed. This process is restricted to a single occurrence.");}
-    if (hasListeners()) {
-    throw StateError(
-      "Cannot attach master effects after listeners have been registered. "
-      "Attach effects before any listening occurs."
-    );
-  }
-    $fxInit
-    _fxAttached = true;
-  }
-
-  // ignore: library_private_types_in_public_api
-  void attachFx(List<_${className}EffectCreator> fxs) {
-    if (_fxAttached) {throw StateError("Multiple attachment attempts are not allowed. This process is restricted to a single occurrence.");}
-    if (hasListeners()) {
-    throw StateError(
-      "Cannot attach master effects after listeners have been registered. "
-      "Attach effects before any listening occurs."
-    );
-  }
-    for (var fx in fxs) {
-      fx(this);
-    }
-    _fxAttached = true;
-  }
-
-  //this will be used to spawn a new MainStates instance that is not singleton.
   factory $className.spawn() => $className._internal(false);
   factory $className() => _instance;
 
-  $gettersSetters
+  //Getter/Setter with performance of O(1)
+$gettersSetters
 
   // ignore: library_private_types_in_public_api
   void multiSet(void Function(_${className}MultiSetter setter) func) {
@@ -189,22 +174,45 @@ final class $className extends Trigger {
     func(setter);
     setMultiValues(setter._map);
   }
+
+  void attachMasterFx() {
+    if (_fxAttached) {
+      throw StateError("Multiple attachment attempts are not allowed.");
+    }
+    if (hasListeners()) {
+      throw StateError("Cannot attach master effects after listeners have been registered.");
+    }
+$fxInit    _fxAttached = true;
+  }
+
+  void attachFx(List<_${className}EffectCreator> fxs) {
+    if (_fxAttached) {
+      throw StateError("Multiple attachment attempts are not allowed.");
+    }
+    if (hasListeners()) {
+      throw StateError("Cannot attach master effects after listeners have been registered.");
+    }
+    for (var fx in fxs) {
+      fx(this);
+    }
+    _fxAttached = true;
+  }
 }
 
-final class ${className}Fields extends TriggerFields<${className}> {
+final class ${className}Fields extends TriggerFields<$className> {
 $fBody
 }
 
 class _${className}MultiSetter {
-  final _map = <String, dynamic>{};
+  final _map = <int, dynamic>{};
 $stBody
 }
 
 abstract base class ${className}Effect extends TriggerEffect<$className> {
   ${className}Effect(super.trigger);
-  $efBody
+$efBody
 
- // ignore: library_private_types_in_public_api
+  // ignore: library_private_types_in_public_api
   void multiSet(Function(_${className}MultiSetter setter) func) {
     final setter = _${className}MultiSetter();
     func(setter);
