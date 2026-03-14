@@ -84,9 +84,9 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
 
       // ดึง Default Value จาก AST
       final library = field.library;
-      final session = library?.session;
+      final session = library.session;
       final parsedLib =
-          session?.getParsedLibraryByElement(library!) as ParsedLibraryResult?;
+          session.getParsedLibraryByElement(library) as ParsedLibraryResult?;
 
       if (parsedLib != null) {
         for (var unit in parsedLib.units) {
