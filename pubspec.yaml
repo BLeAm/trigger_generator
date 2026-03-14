@@ -15,4 +15,4 @@ dependencies:
   trigger: ^0.1.0+1
 
 dev_dependencies:
-  build_runner: ^4.0.4
+  build_runner: ^2.12.2
