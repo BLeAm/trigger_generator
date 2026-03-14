@@ -364,10 +364,11 @@ packages:
   trigger:
     dependency: "direct main"
     description:
-      path: "/home/bleamz/repos/trigger"
-      relative: false
-    source: path
-    version: "0.0.1+5.2"
+      name: trigger
+      sha256: fb7f6eac7da3118c77d82f5c94f3a456c373ac035f614dfa3336e9a6084009a2
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.1.0+1"
   typed_data:
     dependency: transitive
     description:

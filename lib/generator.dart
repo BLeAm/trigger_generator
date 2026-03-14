@@ -6,9 +6,19 @@ import 'package:source_gen/source_gen.dart';
 import 'package:trigger/src/annotations.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
 
+/// ปรับปรุงให้ตรงกับ Logic ใน main.nim ของฝั่ง Nim
 String makeUnModify(String type, String content) {
-  type = type.replaceAll(RegExp(r'<[^>]*>'), '');
-  return 'Unmodifiable${type}View($content)';
+  String viewName = "";
+  if (type.startsWith("List")) {
+    viewName = "UnmodifiableListView";
+  } else if (type.startsWith("Map")) {
+    viewName = "UnmodifiableMapView";
+  } else if (type.startsWith("Set")) {
+    viewName = "UnmodifiableSetView";
+  } else {
+    return content;
+  }
+  return '$viewName($content)';
 }
 
 class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
@@ -37,7 +47,7 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
 
     final fxInit = StringBuffer();
     for (final fx in effects) {
-      if (fx != null) fxInit.writeln('$fx(this);');
+      if (fx != null) fxInit.writeln('      $fx(this);');
     }
 
     final String className =
@@ -58,29 +68,38 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
     for (var field in element.fields) {
       if (field.isStatic || field.isExternal) continue;
 
+      // ดึง Comment (/// หรือ /** */) จาก Source Code
+      final docComment = field.documentationComment != null
+          ? '  ${field.documentationComment}\n'
+          : '';
+
       final bool isNullable =
           field.type.nullabilitySuffix == NullabilitySuffix.question;
       final name = field.name!;
       final capName = name[0].toUpperCase() + name.substring(1);
+
+      // ปรับชื่อให้เป็น _idx เพื่อให้ตรงกับ main.nim
       final idxConst = '_idx$capName';
-      String defaultValue = isNullable ? 'null' : '';
+      String defaultValue = isNullable ? 'null' : "''";
 
       // ดึง Default Value จาก AST
       final library = field.library;
-      final session = library.session;
+      final session = library?.session;
       final parsedLib =
-          session.getParsedLibraryByElement(library) as ParsedLibraryResult?;
-      if (parsedLib == null) continue;
-      for (var unit in parsedLib.units) {
-        for (var declaration in unit.unit.declarations) {
-          if (declaration is ClassDeclaration &&
-              declaration.name.lexeme == rawName) {
-            for (var member in declaration.members) {
-              if (member is FieldDeclaration) {
-                for (var variable in member.fields.variables) {
-                  if (variable.name.lexeme == name &&
-                      variable.initializer != null) {
-                    defaultValue = variable.initializer.toString();
+          session?.getParsedLibraryByElement(library!) as ParsedLibraryResult?;
+
+      if (parsedLib != null) {
+        for (var unit in parsedLib.units) {
+          for (var declaration in unit.unit.declarations) {
+            if (declaration is ClassDeclaration &&
+                declaration.name.lexeme == rawName) {
+              for (var member in declaration.members) {
+                if (member is FieldDeclaration) {
+                  for (var variable in member.fields.variables) {
+                    if (variable.name.lexeme == name &&
+                        variable.initializer != null) {
+                      defaultValue = variable.initializer.toString();
+                    }
                   }
                 }
               }
@@ -92,14 +111,14 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
       final typeStr = field.type.getDisplayString();
 
       // 1. สร้าง Static Index
-      constIndices.writeln('static const int $idxConst = $indexCounter;');
+      constIndices.writeln('  static const int $idxConst = $indexCounter;');
       fieldNamesList.write("'$name', ");
 
-      // 2. สร้าง Getter/Setter O(1)
+      // 2. สร้าง Getter/Setter พร้อมแนบ Comment
       var content = "getValue($idxConst) as $typeStr";
-      if (['List', 'Map', 'Set'].any((t) => typeStr.startsWith(t))) {
-        content = makeUnModify(typeStr, content);
-      }
+      content = makeUnModify(typeStr, content);
+
+      gettersSetters.write(docComment);
       gettersSetters.writeln("  $typeStr get $name => $content;");
       gettersSetters.writeln(
         "  set $name($typeStr val) => setValue($idxConst, val);",
@@ -108,19 +127,21 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
       // 3. Constructor Initialization
       initVal.writeln("    $name = $defaultValue;");
 
-      // 4. Fields (Index-based)
+      // 4. Fields Helper พร้อมแนบ Comment
+      fBody.write(docComment);
       fBody.writeln('''
   ${className}Fields get $name {
     addField($className.$idxConst);
     return this;
   }''');
 
-      // 5. MultiSetter (int keys)
+      // 5. MultiSetter
       stBody.writeln(
         '  set $name($typeStr val) => _map[$className.$idxConst] = val;',
       );
 
-      // 6. Effect (Index-based protection)
+      // 6. Effect พร้อมแนบ Comment
+      efBody.write(docComment);
       efBody.writeln('''
   $typeStr get $name => trigger.$name;
   set $name($typeStr val) {
@@ -135,7 +156,7 @@ class TriggerGenerator extends GeneratorForAnnotation<TriggerGen> {
 typedef _${className}EffectCreator = void Function(${className} t);
 
 final class $className extends Trigger {
-  $constIndices
+$constIndices
   static const int _fieldCount = $indexCounter;
 
   static $className? _instance;
@@ -154,12 +175,13 @@ final class $className extends Trigger {
           scheduler: scheduler,
         ) {
     if (register) {
-$fxInit
-      _fxAttached = true;
+$fxInit      
+
+_fxAttached = true;
     }
 $initVal  }
 
-  //this will be used to spawn a new $className instance that is not singleton.
+  //this will be used to spawn a new MainStates instance that is not singleton.
   factory $className.spawn({UpdateScheduler? scheduler}) =>
       $className._internal(register: false, scheduler: scheduler);
   factory $className({UpdateScheduler? scheduler}) {
@@ -169,7 +191,6 @@ $initVal  }
 
   //Getter/Setter with performance of O(1)
 $gettersSetters
-
   // ignore: library_private_types_in_public_api
   void multiSet(void Function(_${className}MultiSetter setter) func) {
     final setter = _${className}MultiSetter();
@@ -194,8 +215,9 @@ $gettersSetters
         "Attach effects before any listening occurs.",
       );
     }
-$fxInit
-    _fxAttached = true;
+$fxInit    
+
+_fxAttached = true;
   }
 
   // ignore: library_private_types_in_public_api
