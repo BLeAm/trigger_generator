@@ -5,15 +5,15 @@
 
 A powerful code generator for **Trigger**, a high-performance state management library for Flutter and Dart. It automates the generation of `Trigger` classes, providing O(1) field access, unmodifiable views for collections, and seamless state binding.
 
-## 🚀 Features
+##  Features
 
-- **⚡ O(1) Performance**: Generates optimized getters and setters for instant field access.
-- **🛡️ Data Integrity**: Automatically wraps `List`, `Map`, and `Set` in unmodifiable views for safer state management.
-- **🔄 Multi-Setter**: Batch update multiple fields efficiently with a single notification.
-- **🎯 Master Effects**: Declare side effects directly in annotations for automatic attachment.
-- **🏗️ Boilerplate-Free**: No more manual index handling or repetitive trigger setup.
+- ** O(1) Performance**: Generates optimized getters and setters for instant field access.
+- ** Data Integrity**: Automatically wraps `List`, `Map`, and `Set` in unmodifiable views for safer state management.
+- ** Multi-Setter**: Batch update multiple fields efficiently with a single notification.
+- ** Master Effects**: Declare side effects directly in annotations for automatic attachment.
+- ** Boilerplate-Free**: No more manual index handling or repetitive trigger setup.
 
-## 📦 Installation
+##  Installation
 
 Add the following to your `pubspec.yaml`:
 
@@ -26,7 +26,7 @@ dev_dependencies:
   build_runner: ^2.4.0
 ```
 
-## 🛠️ Usage
+## Usage
 
 ### 1. Define your State Class
 
@@ -76,7 +76,7 @@ void main() {
 }
 ```
 
-## 💎 Advanced Features
+## Advanced Features
 
 ### Custom Class Names
 
@@ -96,6 +96,6 @@ You can specify "Master Effects" that will be automatically attached to the stat
 class AuthStateAnno { ... }
 ```
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
